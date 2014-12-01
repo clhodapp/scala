@@ -3466,8 +3466,9 @@ trait Typers extends Adaptations with Tags with TypersTracking with PatternTyper
               doTypedApply(tree, fun, args, mode, pt)
             } else {
               def handlePolymorphicCall = {
+                var currentMt = mt
                 assert(!mode.inPatternMode, mode) // this case cannot arise for patterns
-                val lenientTargs = protoTypeArgs(tparams, formals, mt.resultApprox, pt)
+                val lenientTargs = protoTypeArgs(tparams, formals, currentMt.resultApprox, pt)
                 val strictTargs = map2(lenientTargs, tparams)((targ, tparam) =>
                   if (targ == WildcardType) tparam.tpeHK else targ)
                 var remainingParams = paramTypes
@@ -3492,7 +3493,17 @@ trait Typers extends Adaptations with Tags with TypersTracking with PatternTyper
                   // define the undetparams which have been fixed by this param list, replace the corresponding symbols in "fun"
                   // returns those undetparams which have not been instantiated.
                   val undetparams = inferMethodInstance(fun, tparams, args1, pt)
-                  try doTypedApply(tree, fun, args1, mode, pt)
+                  currentMt = fun.tpe.asInstanceOf[MethodType]
+
+                  val filledInParamTypes = currentMt.paramTypes
+                  val filledInFormals = formalTypes(filledInParamTypes, argslen)
+                  // Give failing arguemnts a chance to retype now that we've inferred our type parameters
+                  val args2 = map3(args, args1, filledInFormals) { (arg, arg1, formal) =>
+                    if (arg1.tpe weak_<:< formal) arg1
+                    else typedArgToPoly(arg, formal)
+                  }
+
+                  try doTypedApply(tree, fun, args2, mode, pt)
                   finally context.undetparams = undetparams
                 }
               }
